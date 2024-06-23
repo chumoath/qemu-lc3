@@ -1,0 +1,18 @@
+config LC3_MCU
+    bool
+    select AVR_TIMER16
+    select AVR_USART
+    select AVR_POWER
+
+# board name is not same as the arch name: meson.build minikconf
+# scripts/minikconf.py
+#   if key not in external_vars and config[key]:
+#        print ('CONFIG_%s=y' % key)
+#
+# CONFIG_LC3 is external_vars, produced by meson.build, configs/devices/lc3-softmmu/default.mak CONFIG_LC3 is board name;
+#     in external_vars, so no will print to config file; board's source file will not compile
+
+config LC3_BOARD 
+    bool
+    select LC3_MCU
+    select UNIMP

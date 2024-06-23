@@ -6,6 +6,6 @@ mkdir build && cd build
 ../configure               \
 --enable-debug             \
 --enable-debug-tcg         \
---target-list=avr-softmmu
+--target-list=lc3-softmmu
 
 make -j6

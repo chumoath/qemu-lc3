@@ -1,0 +1,2 @@
+config LC3
+    bool
