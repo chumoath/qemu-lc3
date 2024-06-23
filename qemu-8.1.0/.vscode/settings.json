@@ -1,0 +1,9 @@
+{
+    "files.associations": {
+        "*.inc": "c",
+        "*.code": "c",
+        "tcg-opc.h": "c",
+        "functional": "c"
+    },
+    "mesonbuild.configureOnOpen": false
+}
