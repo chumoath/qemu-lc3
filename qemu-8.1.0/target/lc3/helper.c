@@ -1,23 +1,3 @@
-/*
- * QEMU AVR CPU helpers
- *
- * Copyright (c) 2016-2020 Michael Rolnik
- *
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Lesser General Public
- * License as published by the Free Software Foundation; either
- * version 2.1 of the License, or (at your option) any later version.
- *
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public
- * License along with this library; if not, see
- * <http://www.gnu.org/licenses/lgpl-2.1.html>
- */
-
 #include "qemu/osdep.h"
 #include "qemu/log.h"
 #include "qemu/error-report.h"
@@ -27,84 +7,22 @@
 #include "exec/address-spaces.h"
 #include "exec/helper-proto.h"
 
-bool avr_cpu_exec_interrupt(CPUState *cs, int interrupt_request)
+bool lc3_cpu_exec_interrupt(CPUState *cs, int interrupt_request)
 {
-    AVRCPU *cpu = AVR_CPU(cs);
-    CPUAVRState *env = &cpu->env;
-
-    /*
-     * We cannot separate a skip from the next instruction,
-     * as the skip would not be preserved across the interrupt.
-     * Separating the two insn normally only happens at page boundaries.
-     */
-    if (env->skip) {
-        return false;
-    }
-
-    if (interrupt_request & CPU_INTERRUPT_RESET) {
-        if (cpu_interrupts_enabled(env)) {
-            cs->exception_index = EXCP_RESET;
-            avr_cpu_do_interrupt(cs);
-
-            cs->interrupt_request &= ~CPU_INTERRUPT_RESET;
-            return true;
-        }
-    }
-    if (interrupt_request & CPU_INTERRUPT_HARD) {
-        if (cpu_interrupts_enabled(env) && env->intsrc != 0) {
-            int index = ctz64(env->intsrc);
-            cs->exception_index = EXCP_INT(index);
-            avr_cpu_do_interrupt(cs);
-
-            env->intsrc &= env->intsrc - 1; /* clear the interrupt */
-            if (!env->intsrc) {
-                cs->interrupt_request &= ~CPU_INTERRUPT_HARD;
-            }
-            return true;
-        }
-    }
-    return false;
+    return true;
 }
 
-void avr_cpu_do_interrupt(CPUState *cs)
+void lc3_cpu_do_interrupt(CPUState *cs)
 {
-    AVRCPU *cpu = AVR_CPU(cs);
-    CPUAVRState *env = &cpu->env;
 
-    uint32_t ret = env->pc_w;
-    int vector = 0;
-    int size = avr_feature(env, AVR_FEATURE_JMP_CALL) ? 2 : 1;
-    int base = 0;
-
-    if (cs->exception_index == EXCP_RESET) {
-        vector = 0;
-    } else if (env->intsrc != 0) {
-        vector = ctz64(env->intsrc) + 1;
-    }
-
-    if (avr_feature(env, AVR_FEATURE_3_BYTE_PC)) {
-        cpu_stb_data(env, env->sp--, (ret & 0x0000ff));
-        cpu_stb_data(env, env->sp--, (ret & 0x00ff00) >> 8);
-        cpu_stb_data(env, env->sp--, (ret & 0xff0000) >> 16);
-    } else if (avr_feature(env, AVR_FEATURE_2_BYTE_PC)) {
-        cpu_stb_data(env, env->sp--, (ret & 0x0000ff));
-        cpu_stb_data(env, env->sp--, (ret & 0x00ff00) >> 8);
-    } else {
-        cpu_stb_data(env, env->sp--, (ret & 0x0000ff));
-    }
-
-    env->pc_w = base + vector * size;
-    env->sregI = 0; /* clear Global Interrupt Flag */
-
-    cs->exception_index = -1;
 }
 
-hwaddr avr_cpu_get_phys_page_debug(CPUState *cs, vaddr addr)
+hwaddr lc3_cpu_get_phys_page_debug(CPUState *cs, vaddr addr)
 {
-    return addr; /* I assume 1:1 address correspondence */
+    return addr;
 }
 
-bool avr_cpu_tlb_fill(CPUState *cs, vaddr address, int size,
+bool lc3_cpu_tlb_fill(CPUState *cs, vaddr address, int size,
                       MMUAccessType access_type, int mmu_idx,
                       bool probe, uintptr_t retaddr)
 {
@@ -113,61 +31,13 @@ bool avr_cpu_tlb_fill(CPUState *cs, vaddr address, int size,
 
     address &= TARGET_PAGE_MASK;
 
-    if (mmu_idx == MMU_CODE_IDX) {
-        /* Access to code in flash. */
-        paddr = OFFSET_CODE + address;
-        prot = PAGE_READ | PAGE_EXEC;
-        if (paddr >= OFFSET_DATA) {
-            /*
-             * This should not be possible via any architectural operations.
-             * There is certainly not an exception that we can deliver.
-             * Accept probing that might come from generic code.
-             */
-            if (probe) {
-                return false;
-            }
-            error_report("execution left flash memory");
-            abort();
-        }
-    } else {
-        /* Access to memory. */
-        paddr = OFFSET_DATA + address;
-        prot = PAGE_READ | PAGE_WRITE;
-        if (address < NUMBER_OF_CPU_REGISTERS + NUMBER_OF_IO_REGISTERS) {
-            /*
-             * Access to CPU registers, exit and rebuilt this TB to use
-             * full access in case it touches specially handled registers
-             * like SREG or SP.  For probing, set page_size = 1, in order
-             * to force tlb_fill to be called for the next access.
-             */
-            if (probe) {
-                page_size = 1;
-            } else {
-                AVRCPU *cpu = AVR_CPU(cs);
-                CPUAVRState *env = &cpu->env;
-                env->fullacc = 1;
-                cpu_loop_exit_restore(cs, retaddr);
-            }
-        }
-    }
-
+    paddr = address;
+    prot = PAGE_READ | PAGE_EXEC | PAGE_WRITE;
     tlb_set_page(cs, address, paddr, prot, mmu_idx, page_size);
     return true;
 }
 
-/*
- *  helpers
- */
-
-void helper_sleep(CPUAVRState *env)
-{
-    CPUState *cs = env_cpu(env);
-
-    cs->exception_index = EXCP_HLT;
-    cpu_loop_exit(cs);
-}
-
-void helper_unsupported(CPUAVRState *env)
+void helper_unsupported(CPULC3State *env)
 {
     CPUState *cs = env_cpu(env);
 
@@ -183,178 +53,133 @@ void helper_unsupported(CPUAVRState *env)
     cpu_loop_exit(cs);
 }
 
-void helper_debug(CPUAVRState *env)
+static uint16_t check_key(void)
 {
-    CPUState *cs = env_cpu(env);
+    fd_set readfds;
+    struct timeval timeout;
 
-    cs->exception_index = EXCP_DEBUG;
-    cpu_loop_exit(cs);
+    FD_ZERO(&readfds);
+    FD_SET(STDIN_FILENO, &readfds);
+
+    timeout.tv_sec = 0;
+    timeout.tv_usec = 0;
+    return select(1, &readfds, NULL, NULL, &timeout) != 0;
 }
 
-void helper_break(CPUAVRState *env)
+target_ulong helper_fullrd(CPULC3State *env, uint32_t addr)
 {
-    CPUState *cs = env_cpu(env);
+    uint16_t data, dr, sr;
+    if (addr == MR_KBSR)
+    {
+        if (check_key())
+        {
+            sr = (1 << 15);
+            dr = getchar();
+        }
+        else
+        {
+            sr = 0;
+        }
 
-    cs->exception_index = EXCP_DEBUG;
-    cpu_loop_exit(cs);
-}
-
-void helper_wdr(CPUAVRState *env)
-{
-    qemu_log_mask(LOG_UNIMP, "WDG reset (not implemented)\n");
-}
-
-/*
- * This function implements IN instruction
- *
- * It does the following
- * a.  if an IO register belongs to CPU, its value is read and returned
- * b.  otherwise io address is translated to mem address and physical memory
- *     is read.
- * c.  it caches the value for sake of SBI, SBIC, SBIS & CBI implementation
- *
- */
-target_ulong helper_inb(CPUAVRState *env, uint32_t port)
-{
-    target_ulong data = 0;
-
-    switch (port) {
-    case 0x38: /* RAMPD */
-        data = 0xff & (env->rampD >> 16);
-        break;
-    case 0x39: /* RAMPX */
-        data = 0xff & (env->rampX >> 16);
-        break;
-    case 0x3a: /* RAMPY */
-        data = 0xff & (env->rampY >> 16);
-        break;
-    case 0x3b: /* RAMPZ */
-        data = 0xff & (env->rampZ >> 16);
-        break;
-    case 0x3c: /* EIND */
-        data = 0xff & (env->eind >> 16);
-        break;
-    case 0x3d: /* SPL */
-        data = env->sp & 0x00ff;
-        break;
-    case 0x3e: /* SPH */
-        data = env->sp >> 8;
-        break;
-    case 0x3f: /* SREG */
-        data = cpu_get_sreg(env);
-        break;
-    default:
-        /* not a special register, pass to normal memory access */
-        data = address_space_ldub(&address_space_memory,
-                                  OFFSET_IO_REGISTERS + port,
-                                  MEMTXATTRS_UNSPECIFIED, NULL);
+        address_space_stw(&address_space_memory, MR_KBSR * 2, sr & 0xffff, MEMTXATTRS_UNSPECIFIED, NULL);
+        address_space_stw(&address_space_memory, MR_KBDR * 2, dr & 0xffff, MEMTXATTRS_UNSPECIFIED, NULL);
     }
-
+    data = address_space_lduw(&address_space_memory, addr * 2, MEMTXATTRS_UNSPECIFIED, NULL);
+    
     return data;
 }
 
-/*
- *  This function implements OUT instruction
- *
- *  It does the following
- *  a.  if an IO register belongs to CPU, its value is written into the register
- *  b.  otherwise io address is translated to mem address and physical memory
- *      is written.
- *  c.  it caches the value for sake of SBI, SBIC, SBIS & CBI implementation
- *
- */
-void helper_outb(CPUAVRState *env, uint32_t port, uint32_t data)
+void helper_fullwr(CPULC3State *env, uint32_t data, uint32_t addr)
 {
-    data &= 0x000000ff;
+    address_space_stw(&address_space_memory, addr * 2, data & 0xffff, MEMTXATTRS_UNSPECIFIED, NULL);
+}
 
-    switch (port) {
-    case 0x38: /* RAMPD */
-        if (avr_feature(env, AVR_FEATURE_RAMPD)) {
-            env->rampD = (data & 0xff) << 16;
-        }
-        break;
-    case 0x39: /* RAMPX */
-        if (avr_feature(env, AVR_FEATURE_RAMPX)) {
-            env->rampX = (data & 0xff) << 16;
-        }
-        break;
-    case 0x3a: /* RAMPY */
-        if (avr_feature(env, AVR_FEATURE_RAMPY)) {
-            env->rampY = (data & 0xff) << 16;
-        }
-        break;
-    case 0x3b: /* RAMPZ */
-        if (avr_feature(env, AVR_FEATURE_RAMPZ)) {
-            env->rampZ = (data & 0xff) << 16;
-        }
-        break;
-    case 0x3c: /* EIDN */
-        env->eind = (data & 0xff) << 16;
-        break;
-    case 0x3d: /* SPL */
-        env->sp = (env->sp & 0xff00) | (data);
-        break;
-    case 0x3e: /* SPH */
-        if (avr_feature(env, AVR_FEATURE_2_BYTE_SP)) {
-            env->sp = (env->sp & 0x00ff) | (data << 8);
-        }
-        break;
-    case 0x3f: /* SREG */
-        cpu_set_sreg(env, data);
-        break;
-    default:
-        /* not a special register, pass to normal memory access */
-        address_space_stb(&address_space_memory, OFFSET_IO_REGISTERS + port,
-                          data, MEMTXATTRS_UNSPECIFIED, NULL);
+static void update_flags(CPULC3State *env, uint16_t r)
+{
+    env->R_Z = 0;
+    env->R_P = 0;
+    env->R_N = 0;
+
+    if (env->r[r] == 0)
+    {
+        env->R_Z = 1;
+    }
+    else if (env->r[r] >> 15)
+    {
+        env->R_N = 1;
+    }
+    else
+    {
+        env->R_P = 1;
     }
 }
 
-/*
- *  this function implements LD instruction when there is a possibility to read
- *  from a CPU register
- */
-target_ulong helper_fullrd(CPUAVRState *env, uint32_t addr)
+void helper_trap(CPULC3State *env, uint32_t trapvect8)
 {
-    uint8_t data;
+    switch (trapvect8) {
+        case TRAP_GETC: 
+        {
+            env->r[0] = (uint16_t)getchar();
+            update_flags(env, 0);
+            break;
+        }
+        case TRAP_OUT:
+        {
+            putc((char)env->r[0], stdout);
+            fflush(stdout);
+            break;
+        }
+        case TRAP_PUTS:
+        {
+            uint16_t c;
+            uint16_t idx;
+            idx = env->r[0];
 
-    env->fullacc = false;
+            while (1)
+            {
+                c = address_space_lduw(&address_space_memory, idx++ * 2, MEMTXATTRS_UNSPECIFIED, NULL);
+                if (!c) break;
+                putc((char)c, stdout);
+            }
+            fflush(stdout);
+            break;
+        }
+        case TRAP_IN:
+        {
+            printf("Enter a character: ");
+            char c = getchar();
+            putc(c, stdout);
+            fflush(stdout);
+            env->r[0] = (uint16_t)c;
+            update_flags(env, 0);
+            break;
+        }
+        case TRAP_PUTSP:
+        {
+            uint16_t c;
+            uint16_t idx;
+            idx = env->r[0];
+            
+            while (1)
+            {
+                char char1, char2;
+                c = address_space_lduw(&address_space_memory, idx++ * 2, MEMTXATTRS_UNSPECIFIED, NULL);
+                if (!c) break;
+                char1 = (c) & 0xFF;
+                putc(char1, stdout);
+                
+                char2 = (c) >> 8;
+                if (char2) putc(char2, stdout);
 
-    if (addr < NUMBER_OF_CPU_REGISTERS) {
-        /* CPU registers */
-        data = env->r[addr];
-    } else if (addr < NUMBER_OF_CPU_REGISTERS + NUMBER_OF_IO_REGISTERS) {
-        /* IO registers */
-        data = helper_inb(env, addr - NUMBER_OF_CPU_REGISTERS);
-    } else {
-        /* memory */
-        data = address_space_ldub(&address_space_memory, OFFSET_DATA + addr,
-                                  MEMTXATTRS_UNSPECIFIED, NULL);
-    }
-    return data;
-}
-
-/*
- *  this function implements ST instruction when there is a possibility to write
- *  into a CPU register
- */
-void helper_fullwr(CPUAVRState *env, uint32_t data, uint32_t addr)
-{
-    env->fullacc = false;
-
-    /* Following logic assumes this: */
-    assert(OFFSET_CPU_REGISTERS == OFFSET_DATA);
-    assert(OFFSET_IO_REGISTERS == OFFSET_CPU_REGISTERS +
-                                  NUMBER_OF_CPU_REGISTERS);
-
-    if (addr < NUMBER_OF_CPU_REGISTERS) {
-        /* CPU registers */
-        env->r[addr] = data;
-    } else if (addr < NUMBER_OF_CPU_REGISTERS + NUMBER_OF_IO_REGISTERS) {
-        /* IO registers */
-        helper_outb(env, addr - NUMBER_OF_CPU_REGISTERS, data);
-    } else {
-        /* memory */
-        address_space_stb(&address_space_memory, OFFSET_DATA + addr, data,
-                          MEMTXATTRS_UNSPECIFIED, NULL);
+            }
+            fflush(stdout);
+            break;
+        }
+        case TRAP_HALT:
+        {
+            puts("HALT");
+            fflush(stdout);
+            break;
+        }
     }
 }

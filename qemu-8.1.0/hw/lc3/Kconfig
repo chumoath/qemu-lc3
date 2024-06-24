@@ -1,8 +1,5 @@
 config LC3_MCU
     bool
-    select AVR_TIMER16
-    select AVR_USART
-    select AVR_POWER
 
 # board name is not same as the arch name: meson.build minikconf
 # scripts/minikconf.py
@@ -15,4 +12,3 @@ config LC3_MCU
 config LC3_BOARD 
     bool
     select LC3_MCU
-    select UNIMP

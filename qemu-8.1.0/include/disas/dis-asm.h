@@ -214,6 +214,7 @@ enum bfd_architecture
   bfd_arch_mn10200,    /* Matsushita MN10200 */
   bfd_arch_mn10300,    /* Matsushita MN10300 */
   bfd_arch_avr,        /* AVR microcontrollers */
+  bfd_arch_lc3,        /* AVR microcontrollers */
 #define bfd_mach_avr1       1
 #define bfd_mach_avr2       2
 #define bfd_mach_avr25      25

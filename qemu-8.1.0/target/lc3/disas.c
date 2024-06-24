@@ -1,23 +1,3 @@
-/*
- * AVR disassembler
- *
- * Copyright (c) 2019-2020 Richard Henderson <rth@twiddle.net>
- * Copyright (c) 2019-2020 Michael Rolnik <mrolnik@gmail.com>
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- */
-
 #include "qemu/osdep.h"
 #include "cpu.h"
 
@@ -27,38 +7,6 @@ typedef struct {
     bool next_word_used;
 } DisasContext;
 
-static int to_regs_16_31_by_one(DisasContext *ctx, int indx)
-{
-    return 16 + (indx % 16);
-}
-
-static int to_regs_16_23_by_one(DisasContext *ctx, int indx)
-{
-    return 16 + (indx % 8);
-}
-
-static int to_regs_24_30_by_two(DisasContext *ctx, int indx)
-{
-    return 24 + (indx % 4) * 2;
-}
-
-static int to_regs_00_30_by_two(DisasContext *ctx, int indx)
-{
-    return (indx % 16) * 2;
-}
-
-static uint16_t next_word(DisasContext *ctx)
-{
-    ctx->next_word_used = true;
-    return ctx->next_word;
-}
-
-static int append_16(DisasContext *ctx, int x)
-{
-    return x << 16 | next_word(ctx);
-}
-
-/* Include the auto-generated decoder.  */
 static bool decode_insn(DisasContext *ctx, uint16_t insn);
 #include "decode-insn.c.inc"
 
@@ -66,7 +14,7 @@ static bool decode_insn(DisasContext *ctx, uint16_t insn);
     (pctx->info->fprintf_func(pctx->info->stream, "%-9s " format, \
                               mnemonic, ##__VA_ARGS__))
 
-int avr_print_insn(bfd_vma addr, disassemble_info *info)
+int lc3_print_insn(bfd_vma addr, disassemble_info *info)
 {
     DisasContext ctx;
     DisasContext *pctx = &ctx;
