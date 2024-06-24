@@ -78,7 +78,7 @@ static bool decode_insn(DisasContext *ctx, uint16_t insn);
 
 static void gen_update_flags(TCGv dr)
 {
-    tcg_gen_setcond_tl(TCG_COND_EQ, cpu_z, dr, 0);
+    tcg_gen_setcondi_tl(TCG_COND_EQ, cpu_z, dr, 0);
 
     tcg_gen_shri_tl(cpu_n, dr, 15);
     tcg_gen_andi_tl(cpu_n, cpu_n, 1);
@@ -88,7 +88,7 @@ static void gen_update_flags(TCGv dr)
     // 1 0
     // 0 1
     tcg_gen_xor_tl(cpu_p, cpu_z, cpu_n);
-    tcg_gen_setcond_tl(TCG_COND_EQ, cpu_p, cpu_p, 0);
+    tcg_gen_setcondi_tl(TCG_COND_EQ, cpu_p, cpu_p, 0);
 }
 
 static void gen_goto_tb(DisasContext *ctx, int n, target_ulong dest)
