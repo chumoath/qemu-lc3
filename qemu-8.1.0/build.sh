@@ -8,4 +8,6 @@ mkdir build && cd build
 --enable-debug-tcg         \
 --target-list=lc3-softmmu
 
+# CONFIG_DEBUG_TCG
+
 make -j6

@@ -9,6 +9,8 @@
 #include "exec/helper-gen.h"
 #include "exec/log.h"
 #include "exec/translator.h"
+#include "qemu/datadir.h"
+#include "hw/loader.h"
 
 #define HELPER_H "helper.h"
 #include "exec/helper-info.c.inc"
@@ -63,14 +65,20 @@ void lc3_cpu_tcg_init(void)
 #undef LC3_REG_OFFS
 }
 
-static uint16_t next_word(DisasContext *ctx)
+static int sign_extend(int x, int bit_count)
 {
-    return cpu_lduw_code(ctx->env, ctx->npc++ * 2);
+    if ((x >> (bit_count - 1)) & 1) {
+        x |= (0xFFFFFFFF << bit_count);
+    }
+    return x;
 }
 
-static int append_16(DisasContext *ctx, int x)
+static uint16_t next_word(DisasContext *ctx)
 {
-    return x << 16 | next_word(ctx);
+    uint16_t ret;
+    address_space_read(&address_space_memory, ctx->npc++ * 2, MEMTXATTRS_UNSPECIFIED, &ret, 2);
+    return ret;
+    // return cpu_lduw_code(ctx->env, ctx->npc++ * 2);
 }
 
 static bool decode_insn(DisasContext *ctx, uint16_t insn);
@@ -95,7 +103,8 @@ static void gen_goto_tb(DisasContext *ctx, int n, target_ulong dest)
 {
     const TranslationBlock *tb = ctx->base.tb;
 
-    if (translator_use_goto_tb(&ctx->base, dest)) {
+    // pc_first ^ dest * 2；如果不 x2，永远不会 block chain
+    if (translator_use_goto_tb(&ctx->base, dest * 2)) {
         tcg_gen_goto_tb(n);
         tcg_gen_movi_i32(cpu_pc, dest);
         tcg_gen_exit_tb(tb, n);
@@ -121,21 +130,27 @@ static bool trans_ADD (DisasContext *ctx, arg_ADD *a)
     TCGv dr = cpu_r[a->DR];
     TCGv sr1 = cpu_r[a->SR1];
     TCGv sr2 = cpu_r[a->SR2];
-    
+    TCGv npc = tcg_constant_tl(ctx->npc);
+    TCGv_ptr fmt = tcg_constant_ptr("ADD: \n");
+
     tcg_gen_add_tl(dr, sr1, sr2);
     tcg_gen_andi_tl(dr, dr, 0xffff);
     gen_update_flags(dr);
+    gen_helper_print_regs(cpu_env, fmt, npc);
     return true;
 }
 static bool trans_ADDI(DisasContext *ctx, arg_ADDI *a)
 {
     TCGv dr = cpu_r[a->DR];
     TCGv sr1 = cpu_r[a->SR1];
-    int imm5 = a->imm5;
-    
-    tcg_gen_addi_tl(dr, sr1, imm5);
+    TCGv npc = tcg_constant_tl(ctx->npc);
+    TCGv_ptr fmt = tcg_constant_ptr("ADDI: \n");
+
+    tcg_gen_addi_tl(dr, sr1, sign_extend(a->imm5, 5));
     tcg_gen_andi_tl(dr, dr, 0xffff);
     gen_update_flags(dr);
+    gen_helper_print_regs(cpu_env, fmt, npc);
+
     return true;
 }
 static bool trans_AND (DisasContext *ctx, arg_AND *a)
@@ -143,132 +158,270 @@ static bool trans_AND (DisasContext *ctx, arg_AND *a)
     TCGv dr = cpu_r[a->DR];
     TCGv sr1 = cpu_r[a->SR1];
     TCGv sr2 = cpu_r[a->SR2];
+    TCGv npc = tcg_constant_tl(ctx->npc);
+    TCGv_ptr fmt = tcg_constant_ptr("AND: \n");
     
     tcg_gen_and_tl(dr, sr1, sr2);
     tcg_gen_andi_tl(dr, dr, 0xffff);
     gen_update_flags(dr);
+    gen_helper_print_regs(cpu_env, fmt, npc);
+
     return true;
 }
 static bool trans_ANDI(DisasContext *ctx, arg_ANDI *a)
 {
     TCGv dr = cpu_r[a->DR];
     TCGv sr1 = cpu_r[a->SR1];
-    int imm5 = a->imm5;
+    TCGv npc = tcg_constant_tl(ctx->npc);
+    TCGv_ptr fmt = tcg_constant_ptr("ANDI: \n");
     
-    tcg_gen_andi_tl(dr, sr1, imm5);
+    tcg_gen_andi_tl(dr, sr1, sign_extend(a->imm5, 5));
     tcg_gen_andi_tl(dr, dr, 0xffff);
     gen_update_flags(dr);
+    gen_helper_print_regs(cpu_env, fmt, npc);
+
     return true;
 }
 static bool trans_BR  (DisasContext *ctx, arg_BR *a)
 {
+    TCGv is_jmp = tcg_temp_new_i32();
+    TCGv is_jmp2 = tcg_temp_new_i32();
+    TCGLabel *not_taken = gen_new_label();
+    TCGv npc = tcg_constant_tl(ctx->npc);
+    TCGv_ptr fmt = tcg_constant_ptr("BR: \n");
+    TCGv_ptr fmt0 = tcg_constant_ptr("BR: 0\n");
+    TCGv_ptr fmt1 = tcg_constant_ptr("BR: 1\n");
+    
+    tcg_gen_andi_tl(is_jmp, cpu_z, a->z);
+    tcg_gen_andi_tl(is_jmp, is_jmp, 1);
+
+    tcg_gen_andi_tl(is_jmp2, cpu_n, a->n);
+    tcg_gen_andi_tl(is_jmp2, is_jmp2, 1);
+
+    tcg_gen_or_tl(is_jmp, is_jmp, is_jmp2);
+
+    tcg_gen_andi_tl(is_jmp2, cpu_p, a->p);
+    tcg_gen_andi_tl(is_jmp2, is_jmp2, 1);
+
+    tcg_gen_or_tl(is_jmp, is_jmp, is_jmp2);
+
+    gen_helper_print_regs(cpu_env, fmt, npc);
+
+    tcg_gen_brcondi_i32(TCG_COND_EQ, is_jmp, 0, not_taken);
+    gen_helper_print_regs(cpu_env, fmt1, npc);
+    gen_goto_tb(ctx, 0, ctx->npc + sign_extend(a->PCoffset9, 9));
+
+    gen_set_label(not_taken);
+    gen_helper_print_regs(cpu_env, fmt0, npc);
+
+    ctx->base.is_jmp = DISAS_CHAIN;
     return true;
 }
+
 static bool trans_JMP (DisasContext *ctx, arg_JMP *a)
 {
+    TCGv npc = tcg_constant_tl(ctx->npc);
+    TCGv_ptr fmt = tcg_constant_ptr("JMP: \n");
+
+    gen_helper_print_regs(cpu_env, fmt, npc);
+    // 必须使用运行时的变量，不能使用编译时的定值；只能使用 pc 和 TCGv
+    // gen_goto_tb(ctx, 0, ctx->env->r[a->BaseR]);
+    // gen_goto_tb(ctx, 0, cpu_r[a->BaseR]);
+    tcg_gen_mov_tl(cpu_pc, cpu_r[a->BaseR]);
+    ctx->base.is_jmp = DISAS_LOOKUP;
+
     return true;
 }
+
 static bool trans_JSR (DisasContext *ctx, arg_JSR *a)
 {
+    TCGv npc = tcg_constant_tl(ctx->npc);
+    TCGv_ptr fmt = tcg_constant_ptr("JSR: \n");
+    
+    tcg_gen_movi_tl(cpu_r[7], ctx->npc);
+
+    gen_helper_print_regs(cpu_env, fmt, npc);
+    gen_goto_tb(ctx, 0, (ctx->npc + sign_extend(a->PCoffset11, 11)) & 0xffff);
+
     return true;
 }
+
 static bool trans_JSRR(DisasContext *ctx, arg_JSRR *a)
 {
+    TCGv npc = tcg_constant_tl(ctx->npc);
+    TCGv_ptr fmt = tcg_constant_ptr("JSRR: \n");
+    
+    tcg_gen_movi_tl(cpu_r[7], ctx->npc);
+
+    gen_helper_print_regs(cpu_env, fmt, npc);
+    // 必须使用运行时的变量，不能使用编译时的定值；只能使用 pc 和 TCGv
+    // gen_goto_tb(ctx, 0, ctx->env->r[a->BaseR]);
+    // gen_goto_tb(ctx, 0, cpu_r[a->BaseR]);
+    tcg_gen_mov_tl(cpu_pc, cpu_r[a->BaseR]);
+    ctx->base.is_jmp = DISAS_LOOKUP;
     return true;
 }
+
 static bool trans_LD  (DisasContext *ctx, arg_LD *a)
 {
     TCGv dr = cpu_r[a->DR];
     TCGv addr = tcg_temp_new_i32();
+    TCGv npc = tcg_constant_tl(ctx->npc);
+    TCGv_ptr fmt = tcg_constant_ptr("LD: \n");
     
-    tcg_gen_addi_tl(addr, cpu_pc, a->PCoffset9);
+    tcg_gen_movi_tl(addr, ctx->npc);
+    tcg_gen_addi_tl(addr, addr, sign_extend(a->PCoffset9, 9));
     gen_data_load(ctx, dr, addr);
     tcg_gen_andi_tl(dr, dr, 0xffff);
     gen_update_flags(dr);
+
+    gen_helper_print_regs(cpu_env, fmt, npc);
+
     return true;
 }
+
 static bool trans_LDI (DisasContext *ctx, arg_LDI *a)
 {
     TCGv dr = cpu_r[a->DR];
     TCGv addr = tcg_temp_new_i32();
     TCGv addr1 = tcg_temp_new_i32();
+    TCGv npc = tcg_constant_tl(ctx->npc);
+    TCGv_ptr fmt = tcg_constant_ptr("LDI: \n");
     
-    tcg_gen_addi_tl(addr, cpu_pc, a->PCoffset9);
+    tcg_gen_movi_tl(addr, ctx->npc);
+    tcg_gen_addi_tl(addr, addr, sign_extend(a->PCoffset9, 9));
     gen_data_load(ctx, addr1, addr);
     gen_data_load(ctx, dr, addr1);
     tcg_gen_andi_tl(dr, dr, 0xffff);
     gen_update_flags(dr);
+
+    gen_helper_print_regs(cpu_env, fmt, npc);
+
     return true;
 }
+
 static bool trans_LDR (DisasContext *ctx, arg_LDR *a)
 {
     TCGv dr = cpu_r[a->DR];
     TCGv baser = cpu_r[a->BaseR];
     TCGv addr = tcg_temp_new_i32();
+    TCGv npc = tcg_constant_tl(ctx->npc);
+    TCGv_ptr fmt = tcg_constant_ptr("LDR: \n");
     
-    tcg_gen_addi_tl(addr, baser, a->offset6);
+    tcg_gen_addi_tl(addr, baser, sign_extend(a->offset6, 6));
     gen_data_load(ctx, dr, addr);
     tcg_gen_andi_tl(dr, dr, 0xffff);
     gen_update_flags(dr);
+    
+    gen_helper_print_regs(cpu_env, fmt, npc);
+
     return true;
 }
+
 static bool trans_LEA (DisasContext *ctx, arg_LEA *a)
 {
     TCGv dr = cpu_r[a->DR];
+    TCGv addr = tcg_temp_new_i32();
+    TCGv npc = tcg_constant_tl(ctx->npc);
+    TCGv_ptr fmt = tcg_constant_ptr("LEA: \n");
     
-    tcg_gen_addi_tl(dr, cpu_pc, a->PCoffset9);
+    tcg_gen_movi_tl(addr, ctx->npc);
+    tcg_gen_addi_tl(dr, addr, sign_extend(a->PCoffset9, 9));
     tcg_gen_andi_tl(dr, dr, 0xffff);
     gen_update_flags(dr);
+
+    gen_helper_print_regs(cpu_env, fmt, npc);
+
     return true;
 }
+
 static bool trans_NOT (DisasContext *ctx, arg_NOT *a)
 {
     TCGv dr = cpu_r[a->DR];
     TCGv sr = cpu_r[a->SR];
+    TCGv npc = tcg_constant_tl(ctx->npc);
+    TCGv_ptr fmt = tcg_constant_ptr("NOT: \n");
+    
     tcg_gen_not_tl(dr, sr);
     tcg_gen_andi_tl(dr, dr, 0xffff);
     gen_update_flags(dr);
+
+    gen_helper_print_regs(cpu_env, fmt, npc);
+
     return true;
 }
+
 static bool trans_RTI (DisasContext *ctx, arg_RTI *a)
 {
+    TCGv npc = tcg_constant_tl(ctx->npc);
+    TCGv_ptr fmt = tcg_constant_ptr("RTI: \n");
+
+    gen_helper_print_regs(cpu_env, fmt, npc);
+
     return true;
 }
+
 static bool trans_ST  (DisasContext *ctx, arg_ST *a)
 {
     TCGv sr = cpu_r[a->SR];
     TCGv addr = tcg_temp_new_i32();
+    TCGv npc = tcg_constant_tl(ctx->npc);
+    TCGv_ptr fmt = tcg_constant_ptr("ST: \n");
     
-    tcg_gen_addi_tl(addr, cpu_pc, a->PCoffset9);
+    tcg_gen_movi_tl(addr, ctx->npc);
+    tcg_gen_addi_tl(addr, addr, sign_extend(a->PCoffset9, 9));
     gen_data_store(ctx, sr, addr);
+
+    gen_helper_print_regs(cpu_env, fmt, npc);
+
     return true;
 }
+
 static bool trans_STI (DisasContext *ctx, arg_STI *a)
 {
     TCGv sr = cpu_r[a->SR];
     TCGv addr = tcg_temp_new_i32();
     TCGv addr1 = tcg_temp_new_i32();
+    TCGv npc = tcg_constant_tl(ctx->npc);
+    TCGv_ptr fmt = tcg_constant_ptr("STI: \n");
     
-    tcg_gen_addi_tl(addr, cpu_pc, a->PCoffset9);
+    tcg_gen_movi_tl(addr, ctx->npc);
+    tcg_gen_addi_tl(addr, addr, sign_extend(a->PCoffset9, 9));
     gen_data_load(ctx, addr1, addr);
     gen_data_store(ctx, sr, addr1);
+
+    gen_helper_print_regs(cpu_env, fmt, npc);
+
     return true;
 }
+
 static bool trans_STR (DisasContext *ctx, arg_STR *a)
 {
     TCGv sr = cpu_r[a->SR];
     TCGv baser = cpu_r[a->BaseR];
     TCGv addr = tcg_temp_new_i32();
+    TCGv npc = tcg_constant_tl(ctx->npc);
+    TCGv_ptr fmt = tcg_constant_ptr("STR: \n");
     
-    tcg_gen_addi_tl(addr, baser, a->offset6);
+    tcg_gen_addi_tl(addr, baser, sign_extend(a->offset6, 6));
     gen_data_store(ctx, sr, addr);
+
+    gen_helper_print_regs(cpu_env, fmt, npc);
+
     return true;
 }
+
 static bool trans_TRAP(DisasContext *ctx, arg_TRAP *a)
 {
     TCGv trapvect8 = tcg_constant_i32(a->trapvect8);
-    tcg_gen_mov_tl(cpu_r[7], cpu_pc);
+    TCGv npc = tcg_constant_tl(ctx->npc);
+    TCGv_ptr fmt = tcg_constant_ptr("TRAP: \n");
+    
+    tcg_gen_movi_tl(cpu_r[7], ctx->npc);
     gen_helper_trap(cpu_env, trapvect8);
+
+    gen_helper_print_regs(cpu_env, fmt, npc);
+
     return true;
 }
 
@@ -286,7 +439,6 @@ static void lc3_tr_init_disas_context(DisasContextBase *dcbase, CPUState *cs)
 {
     DisasContext *ctx = container_of(dcbase, DisasContext, base);
     CPULC3State *env = cs->env_ptr;
-    uint32_t tb_flags = ctx->base.tb->flags;
 
     ctx->cs = cs;
     ctx->env = env;
@@ -328,12 +480,14 @@ static void lc3_tr_tb_stop(DisasContextBase *dcbase, CPUState *cs)
     switch (ctx->base.is_jmp) {
     case DISAS_NORETURN:
         break;
-    case DISAS_NEXT:
-    case DISAS_TOO_MANY:
     case DISAS_CHAIN:
         gen_goto_tb(ctx, 1, ctx->npc);
         break;
+    case DISAS_TOO_MANY:
+        tcg_gen_movi_tl(cpu_pc, ctx->npc);
     case DISAS_LOOKUP:
+        // 找不到会返回 tcg_code_gen_epilogue，所以不需要 exit
+        // lookup_tb_ptr->cpu_get_tb_cpu_state->lc3(cpu.c) R_PC
         tcg_gen_lookup_and_goto_ptr();
         break;
     case DISAS_EXIT:

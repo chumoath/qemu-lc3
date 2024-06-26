@@ -1002,7 +1002,7 @@ static void gen_goto_tb(DisasContext *ctx, int n, target_ulong dest)
 static bool trans_RJMP(DisasContext *ctx, arg_RJMP *a)
 {
     int dst = ctx->npc + a->imm;
-
+cpu_
     gen_goto_tb(ctx, 0, dst);
 
     return true;

@@ -48,21 +48,29 @@ static bool trans_##opcode(DisasContext *pctx, arg_##opcode * a)        \
     return true;                                                        \
 }
 
-INSN(BR,   "n%d z%d p%d PCoffset9%d", a->n, a->z, a->p, a->PCoffset9)
+static int sign_extend(int x, int bit_count)
+{
+    if ((x >> (bit_count - 1)) & 1) {
+        x |= (0xFFFFFFFF << bit_count);
+    }
+    return x;
+}
+
+INSN(BR,   "n%d z%d p%d PCoffset9%d", a->n, a->z, a->p, sign_extend(a->PCoffset9, 9))
 INSN(ADD,  "DR %d SR1 %d SR2 %d", a->DR, a->SR1, a->SR2)
-INSN(ADDI, "DR %d SR1 %d imm5 %d", a->DR, a->SR1, a->imm5)
-INSN(LD,   "DR %d PCoffset9 %d", a->DR, a->PCoffset9)
-INSN(ST,   "SR %d PCoffset9 %d", a->SR, a->PCoffset9)
-INSN(JSR,  "PCoffset11 %d", a->PCoffset11)
+INSN(ADDI, "DR %d SR1 %d imm5 %d", a->DR, a->SR1, sign_extend(a->imm5, 5))
+INSN(LD,   "DR %d PCoffset9 %d", a->DR, sign_extend(a->PCoffset9, 9))
+INSN(ST,   "SR %d PCoffset9 %d", a->SR, sign_extend(a->PCoffset9, 9))
+INSN(JSR,  "PCoffset11 %d", sign_extend(a->PCoffset11, 11))
 INSN(JSRR, "BaseR %d", a->BaseR)
 INSN(AND,  "DR %d SR1 %d SR2 %d", a->DR, a->SR1, a->SR2)
-INSN(ANDI, "DR %d SR1 %d imm5 %d", a->DR, a->SR1, a->imm5)
-INSN(LDR,  "DR %d BaseR %d offset6 %d", a->DR, a->BaseR, a->offset6)
-INSN(STR,  "SR %d BaseR %d offset6 %d", a->SR, a->BaseR, a->offset6)
+INSN(ANDI, "DR %d SR1 %d imm5 %d", a->DR, a->SR1, sign_extend(a->imm5, 5))
+INSN(LDR,  "DR %d BaseR %d offset6 %d", a->DR, a->BaseR, sign_extend(a->offset6, 6))
+INSN(STR,  "SR %d BaseR %d offset6 %d", a->SR, a->BaseR, sign_extend(a->offset6, 6))
 INSN(RTI,  "")
 INSN(NOT,  "DR %d SR %d", a->DR, a->SR)
-INSN(LDI,  "DR %d PCoffset9 %d", a->DR, a->PCoffset9)
-INSN(STI,  "SR %d PCoffset9 %d", a->SR, a->PCoffset9)
+INSN(LDI,  "DR %d PCoffset9 %d", a->DR, sign_extend(a->PCoffset9, 9))
+INSN(STI,  "SR %d PCoffset9 %d", a->SR, sign_extend(a->PCoffset9, 9))
 INSN(JMP,  "BaseR %d", a->BaseR)
-INSN(LEA,  "DR %d PCoffset9 %d", a->DR, a->PCoffset9)
+INSN(LEA,  "DR %d PCoffset9 %d", a->DR, sign_extend(a->PCoffset9, 9))
 INSN(TRAP, "trapvect8 %d", a->trapvect8)

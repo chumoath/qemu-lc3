@@ -61,7 +61,7 @@ bool lc3_load_firmware(LC3CPU *cpu, MachineState *ms, MemoryRegion *program_mr, 
     }
 
     address_space_write(&address_space_memory, 0x6000, MEMTXATTRS_UNSPECIFIED, (uint8_t *)memory + 0x6000, MEMORY_MAX * 2 - 0x6000);
-    address_space_read_full(&address_space_memory, 0x6000, MEMTXATTRS_UNSPECIFIED, &val, 2);
+    address_space_read(&address_space_memory, 0x6000, MEMTXATTRS_UNSPECIFIED, &val, 2);
     return true;
 }
 

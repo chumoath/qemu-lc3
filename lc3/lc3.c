@@ -9,6 +9,10 @@
 #include <sys/types.h>
 #include <sys/termios.h>
 #include <sys/mman.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <stdarg.h>
+
 
 #define MEMORY_MAX (1 << 16)
 uint16_t memory[MEMORY_MAX];  /* 65536 locations */
@@ -74,6 +78,49 @@ enum
 };
 
 struct termios original_tio;
+
+#ifdef LC3_LOG
+static void lc3_log(const char *log_file_name, const char *fmt, ...)
+{
+    char log_file_path[64], mode[2] = "a";
+    sprintf (log_file_path, "%s", log_file_name);
+
+    #if 0
+    struct stat st = {};
+    stat (log_file_path, &st);
+    if (st.st_size > 200 * 1024) {
+        mode[0] = 'w';
+    }
+    #endif
+
+    FILE *fp = NULL;
+    fp = fopen (log_file_path, mode);
+    
+    va_list args;
+    va_start (args, fmt);
+    vfprintf (fp, fmt, args);
+    fflush(fp);
+    va_end (args);
+    fclose (fp);
+}
+
+void helper_print_regs(const void *fmt, uint32_t npc)
+{
+    lc3_log("debug.txt", fmt);
+    lc3_log("debug.txt", "    npc: 0x%x\n", npc);
+    lc3_log("debug.txt", "    R_P: 0x%x R_Z: 0x%x R_N: 0x%x\n", reg[R_COND] == FL_POS, reg[R_COND] == FL_ZRO, reg[R_COND] == FL_NEG);
+    lc3_log("debug.txt", "    ");
+    for (int i = 0; i < 8; i++) {
+        lc3_log("debug.txt", "R%d: 0x%x ", i, reg[i]);
+    }
+    lc3_log("debug.txt", "\n\n");
+}
+#else
+void helper_print_regs(const void *fmt, uint32_t npc)
+{
+}
+#endif
+
 
 void disable_input_buffering()
 {
@@ -249,7 +296,6 @@ int main(int argc, const char* argv[])
         /* FETCH */
         uint16_t instr = mem_read(reg[R_PC]++);
         uint16_t op = instr >> 12;
-
         switch (op)
         {
             case OP_ADD:
@@ -259,6 +305,12 @@ int main(int argc, const char* argv[])
                     reg[DR(instr)] = (reg[SR1(instr)] + reg[SR2(instr)]) & 0xFFFF;
                 }
                 update_flags(DR(instr));
+
+                if (instr & 0x0020) {
+                    helper_print_regs("ADDI: \n", reg[R_PC]);
+                } else {
+                    helper_print_regs("ADD: \n", reg[R_PC]);
+                }
                 break;
             case OP_AND:
                 if (instr & 0x0020) {
@@ -267,51 +319,80 @@ int main(int argc, const char* argv[])
                     reg[DR(instr)] = (reg[SR1(instr)] & reg[SR2(instr)]) & 0xFFFF;
                 }
                 update_flags(DR(instr));
+                
+                if (instr & 0x0020) {
+                    helper_print_regs("ANDI: \n", reg[R_PC]);
+                } else {
+                    helper_print_regs("AND: \n", reg[R_PC]);
+                }
                 break;
             case OP_NOT:
                 reg[DR(instr)] = (~reg[SR(instr)]) & 0xFFFF;
                 update_flags(DR(instr));
+                helper_print_regs("NOT: \n", reg[R_PC]);
                 break;
             case OP_BR:
+                helper_print_regs("BR: \n", reg[R_PC]);
+                
                 if ((fn(instr) && reg[R_COND] == FL_NEG) || (fz(instr) && reg[R_COND] == FL_ZRO) || (fp(instr) && reg[R_COND] == FL_POS)) {
+                    helper_print_regs("BR: 1\n", reg[R_PC]);
                     reg[R_PC] = (reg[R_PC] + PCoffset9(instr)) & 0xFFFF;
+                } else {
+                    helper_print_regs("BR: 0\n", reg[R_PC]);
                 }
                 break;
             case OP_JMP:
+                helper_print_regs("JMP: \n", reg[R_PC]);
                 reg[R_PC] = reg[BaseR(instr)] & 0xFFFF;
                 break;
             case OP_JSR:
                 reg[R_R7] = reg[R_PC];
                 if (instr & 0x0800) {
+                    helper_print_regs("JSR: \n", reg[R_PC]);
                     reg[R_PC] = (reg[R_PC] + PCoffset11(instr)) & 0xFFFF;
                 } else {
+                    helper_print_regs("JSRR: \n", reg[R_PC]);
                     reg[R_PC] = reg[BaseR(instr)];
                 }
                 break;
             case OP_LD:
                 reg[DR(instr)] = mem_read((reg[R_PC] + PCoffset9(instr)) & 0xFFFF);
                 update_flags(DR(instr));
+                helper_print_regs("LD: \n", reg[R_PC]);
+
                 break;
             case OP_LDI:
                 reg[DR(instr)] = mem_read(mem_read((reg[R_PC] + PCoffset9(instr)) & 0xFFFF));
                 update_flags(DR(instr));
+                helper_print_regs("LDI: \n", reg[R_PC]);
+
                 break;
             case OP_LDR:
                 reg[DR(instr)] = mem_read((reg[BaseR(instr)] + offset6(instr)) & 0xFFFF);
                 update_flags(DR(instr));
+                helper_print_regs("LDR: \n", reg[R_PC]);
+
                 break;
             case OP_LEA:
                 reg[DR(instr)] = (reg[R_PC] + PCoffset9(instr)) & 0xFFFF;
                 update_flags(DR(instr));
+                helper_print_regs("LEA: \n", reg[R_PC]);
+
                 break;
             case OP_ST:
                 mem_write(((reg[R_PC] + PCoffset9(instr)) & 0xFFFF), reg[SR(instr)]);
+                helper_print_regs("ST: \n", reg[R_PC]);
+
                 break;
             case OP_STI:
                 mem_write(mem_read((reg[R_PC] + PCoffset9(instr)) & 0xFFFF), reg[SR(instr)]);
+                helper_print_regs("STI: \n", reg[R_PC]);
+
                 break;
             case OP_STR:
                 mem_write((reg[BaseR(instr)] + offset6(instr)) & 0xFFFF, reg[SR(instr)]);
+                helper_print_regs("STR: \n", reg[R_PC]);
+
                 break;
             case OP_TRAP:
                 reg[R_R7] = reg[R_PC];
@@ -381,6 +462,7 @@ int main(int argc, const char* argv[])
                         exit(-2);
                         break;
                 }
+                helper_print_regs("TRAP: \n", reg[R_PC]);
         }
     }
 

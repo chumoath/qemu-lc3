@@ -84,6 +84,7 @@ target_ulong helper_fullrd(CPULC3State *env, uint32_t addr)
         address_space_stw(&address_space_memory, MR_KBSR * 2, sr & 0xffff, MEMTXATTRS_UNSPECIFIED, NULL);
         address_space_stw(&address_space_memory, MR_KBDR * 2, dr & 0xffff, MEMTXATTRS_UNSPECIFIED, NULL);
     }
+
     data = address_space_lduw(&address_space_memory, addr * 2, MEMTXATTRS_UNSPECIFIED, NULL);
     
     return data;
@@ -183,3 +184,57 @@ void helper_trap(CPULC3State *env, uint32_t trapvect8)
         }
     }
 }
+
+#ifdef PRINT_REGS
+static void lc3_log(const char *log_file_name, const char *fmt, ...)
+{
+    char log_file_path[64], mode[2] = "a";
+    sprintf (log_file_path, "%s", log_file_name);
+
+    #if 0
+    struct stat st = {};
+    stat (log_file_path, &st);
+    if (st.st_size > 200 * 1024) {
+        mode[0] = 'w';
+    }
+    #endif
+
+    FILE *fp = NULL;
+    fp = fopen (log_file_path, mode);
+    
+    va_list args;
+    va_start (args, fmt);
+    vfprintf (fp, fmt, args);
+    fflush(fp);
+    va_end (args);
+    fclose (fp);
+}
+
+void helper_print_regs(CPULC3State *env, const void *fmt, uint32_t npc)
+{
+    lc3_log("debug.txt", fmt);
+    lc3_log("debug.txt", "    npc: 0x%x\n", npc);
+    lc3_log("debug.txt", "    R_P: 0x%x R_Z: 0x%x R_N: 0x%x\n", env->R_P, env->R_Z, env->R_N);
+    lc3_log("debug.txt", "    ");
+    for (int i = 0; i < NUMBER_OF_CPU_REGISTERS; i++) {
+        lc3_log("debug.txt", "R%d: 0x%x ", i, env->r[i]);
+    }
+    lc3_log("debug.txt", "\n\n");
+}
+
+void helper_print_val(CPULC3State *env, uint32_t num)
+{
+    lc3_log("debug.txt", "\n\n");
+    lc3_log("debug.txt", "num = 0x%x\n", num);
+    lc3_log("debug.txt", "\n\n");
+}
+#else
+void helper_print_regs(CPULC3State *env, const void *fmt, uint32_t npc)
+{
+}
+
+void helper_print_val(CPULC3State *env, uint32_t num)
+{
+}
+#endif
+
